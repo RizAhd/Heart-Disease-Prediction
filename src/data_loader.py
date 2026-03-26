@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+from pandas.api.types import is_object_dtype, is_string_dtype
 
 from src.config import DATASET_PATH, UCI_COLUMNS, UCI_FALLBACK_URL
 
@@ -40,10 +41,15 @@ def _standardize_target(df: pd.DataFrame) -> pd.DataFrame:
     if "target" not in df.columns:
         return df
 
-    if df["target"].dtype == object:
+    if is_object_dtype(df["target"]) or is_string_dtype(df["target"]):
+        normalized = df["target"].astype(str).str.strip().str.lower()
         mapping = {
             "presence": 1,
             "absence": 0,
+            "present": 1,
+            "absent": 0,
+            "disease": 1,
+            "no disease": 0,
             "yes": 1,
             "no": 0,
             "true": 1,
@@ -51,7 +57,7 @@ def _standardize_target(df: pd.DataFrame) -> pd.DataFrame:
             "1": 1,
             "0": 0,
         }
-        df["target"] = df["target"].astype(str).str.strip().str.lower().map(mapping)
+        df["target"] = normalized.map(mapping)
 
     df["target"] = pd.to_numeric(df["target"], errors="coerce")
 
