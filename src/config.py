@@ -10,7 +10,7 @@ MODELS_DIR = PROJECT_ROOT / "models"
 REPORTS_DIR = PROJECT_ROOT / "reports"
 FIGURES_DIR = REPORTS_DIR / "figures"
 
-DATASET_FILENAME = "heart_disease_uci.csv"
+DATASET_FILENAME = "Heart_Disease_Prediction.csv"
 DATASET_PATH = DATA_DIR / DATASET_FILENAME
 
 TARGET_COL = "target"

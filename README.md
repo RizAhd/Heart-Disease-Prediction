@@ -43,8 +43,8 @@ Haearty/
 From the project root folder:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+python -m venv heartdiseaseprediction
+.\heartdiseaseprediction\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
@@ -52,9 +52,11 @@ pip install -r requirements.txt
 ## 4. Dataset
 
 Primary expected file:
-- `data/heart_disease_uci.csv`
+- `data/Heart_Disease_Prediction.csv`
 
-If this file is not available, the code automatically downloads the UCI Cleveland dataset and saves it as `data/heart_disease_uci.csv`.
+The loader is synced to your column format and target labels (`Presence` / `Absence`).
+
+If this file is not available, the code automatically downloads the UCI Cleveland dataset and saves it as `data/Heart_Disease_Prediction.csv`.
 
 ## 5. Run Full Training and Evaluation
 
@@ -107,7 +109,7 @@ After successful run, expected artifacts include:
    - Upgrade pip before installation.
 
 2. Notebook kernel mismatch:
-   - Select the same virtual environment (`.venv`) as the notebook kernel.
+   - Select the same virtual environment (`heartdiseaseprediction`) as the notebook kernel.
 
 3. If execution is slow:
    - Reduce GridSearch parameter ranges in `src/train_and_evaluate.py`.

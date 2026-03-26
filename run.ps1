@@ -5,10 +5,10 @@ param(
 $ErrorActionPreference = "Stop"
 
 if (-not $SkipVenv) {
-    if (-not (Test-Path ".venv")) {
-        python -m venv .venv
+    if (-not (Test-Path "heartdiseaseprediction")) {
+        python -m venv heartdiseaseprediction
     }
-    . .\.venv\Scripts\Activate.ps1
+    . .\heartdiseaseprediction\Scripts\Activate.ps1
 }
 
 python -m pip install --upgrade pip
