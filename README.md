@@ -71,6 +71,11 @@ This generates:
 - Evaluation figures in `reports/figures/`
 - `reports/model_comparison_summary.csv`
 - `reports/detailed_results.json`
+- `reports/outlier_handling_summary.csv`
+- `reports/correlation_filter_summary.json`
+- `reports/feature_importance.csv`
+- `reports/feature_selection_summary.json`
+- `reports/ann_tuning_results.csv`
 
 ## 6. Execute the Notebook
 
@@ -101,6 +106,11 @@ After successful run, expected artifacts include:
 - `reports/figures/ann_training_history.png`
 - `reports/model_comparison_summary.csv`
 - `reports/detailed_results.json`
+- `reports/outlier_handling_summary.csv`
+- `reports/correlation_filter_summary.json`
+- `reports/feature_importance.csv`
+- `reports/feature_selection_summary.json`
+- `reports/ann_tuning_results.csv`
 
 ## 8. Troubleshooting
 
@@ -118,10 +128,10 @@ After successful run, expected artifacts include:
 
 This implementation directly addresses the final assignment objectives:
 - Data collection and understanding
-- Data preprocessing
+- Data preprocessing (missing values, duplicate handling, outlier capping)
 - EDA
-- Feature engineering via preprocessing pipeline
+- Feature engineering (correlation filtering + feature importance based selection)
 - ML + DL model development
 - Evaluation and comparison
-- Hyperparameter tuning
+- Hyperparameter tuning (GridSearch/RandomizedSearch + ANN random search)
 - Documentation and reporting

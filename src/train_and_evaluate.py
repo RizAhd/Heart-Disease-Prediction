@@ -22,7 +22,7 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
-from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, train_test_split
+from sklearn.model_selection import GridSearchCV, ParameterSampler, RandomizedSearchCV, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.tree import DecisionTreeClassifier
@@ -62,7 +62,13 @@ def preprocess_input(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def create_preprocessor() -> ColumnTransformer:
+def infer_feature_groups(X: pd.DataFrame) -> tuple[list[str], list[str]]:
+    num_features = [c for c in NUMERICAL_FEATURES if c in X.columns]
+    cat_features = [c for c in CATEGORICAL_FEATURES if c in X.columns]
+    return num_features, cat_features
+
+
+def create_preprocessor(num_features: list[str], cat_features: list[str]) -> ColumnTransformer:
     numeric_pipe = Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="median")),
@@ -79,11 +85,84 @@ def create_preprocessor() -> ColumnTransformer:
 
     preprocessor = ColumnTransformer(
         transformers=[
-            ("num", numeric_pipe, NUMERICAL_FEATURES),
-            ("cat", categorical_pipe, CATEGORICAL_FEATURES),
+            ("num", numeric_pipe, num_features),
+            ("cat", categorical_pipe, cat_features),
         ]
     )
     return preprocessor
+
+
+def handle_outliers_iqr(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    cleaned = df.copy()
+    summary_rows = []
+
+    for col in NUMERICAL_FEATURES:
+        if col not in cleaned.columns:
+            continue
+
+        q1 = cleaned[col].quantile(0.25)
+        q3 = cleaned[col].quantile(0.75)
+        iqr = q3 - q1
+        if iqr == 0 or pd.isna(iqr):
+            continue
+
+        lower = q1 - 1.5 * iqr
+        upper = q3 + 1.5 * iqr
+        before_low = int((cleaned[col] < lower).sum())
+        before_high = int((cleaned[col] > upper).sum())
+
+        cleaned[col] = cleaned[col].clip(lower=lower, upper=upper)
+
+        summary_rows.append(
+            {
+                "feature": col,
+                "lower_bound": float(lower),
+                "upper_bound": float(upper),
+                "low_outliers_capped": before_low,
+                "high_outliers_capped": before_high,
+                "total_capped": before_low + before_high,
+            }
+        )
+
+    summary_df = pd.DataFrame(summary_rows)
+    return cleaned, summary_df
+
+
+def apply_correlation_filter(df: pd.DataFrame, threshold: float = 0.90) -> tuple[pd.DataFrame, list[str]]:
+    numeric_cols = [c for c in NUMERICAL_FEATURES + CATEGORICAL_FEATURES if c in df.columns and c != TARGET_COL]
+    if not numeric_cols:
+        return df, []
+
+    corr_matrix = df[numeric_cols].corr().abs()
+    upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+    to_drop = [col for col in upper.columns if (upper[col] > threshold).any()]
+
+    filtered = df.drop(columns=to_drop, errors="ignore")
+    return filtered, to_drop
+
+
+def select_top_features_by_importance(X_train: pd.DataFrame, y_train: pd.Series, top_k: int = 10) -> tuple[list[str], pd.DataFrame]:
+    model = RandomForestClassifier(n_estimators=300, random_state=RANDOM_STATE)
+
+    X_imp = X_train.copy()
+    for col in X_imp.columns:
+        if X_imp[col].isna().any():
+            if col in NUMERICAL_FEATURES:
+                X_imp[col] = X_imp[col].fillna(X_imp[col].median())
+            else:
+                X_imp[col] = X_imp[col].fillna(X_imp[col].mode(dropna=True).iloc[0])
+
+    model.fit(X_imp, y_train)
+    importances = pd.DataFrame(
+        {
+            "feature": X_imp.columns,
+            "importance": model.feature_importances_,
+        }
+    ).sort_values("importance", ascending=False)
+
+    k = max(1, min(top_k, len(importances)))
+    selected = importances.head(k)["feature"].tolist()
+    return selected, importances
 
 
 def evaluate_model(name: str, model, X_test, y_test) -> dict:
@@ -138,7 +217,8 @@ def save_roc_curves(
 
 
 def train_ml_models(X_train, X_test, y_train, y_test) -> tuple[pd.DataFrame, dict, dict[str, tuple[np.ndarray, np.ndarray, float]]]:
-    preprocessor = create_preprocessor()
+    num_features, cat_features = infer_feature_groups(X_train)
+    preprocessor = create_preprocessor(num_features, cat_features)
 
     models = {
         "Logistic Regression": LogisticRegression(max_iter=2000, random_state=RANDOM_STATE),
@@ -216,43 +296,84 @@ def train_ml_models(X_train, X_test, y_train, y_test) -> tuple[pd.DataFrame, dic
     return summary, details, roc_data
 
 
-def build_ann(input_dim: int) -> Sequential:
+def build_ann(input_dim: int, params: dict) -> Sequential:
     model = Sequential(
         [
-            Dense(64, activation="relu", input_shape=(input_dim,)),
-            Dropout(0.30),
-            Dense(32, activation="relu"),
-            Dropout(0.20),
+            Dense(params["units_1"], activation="relu", input_shape=(input_dim,)),
+            Dropout(params["dropout_1"]),
+            Dense(params["units_2"], activation="relu"),
+            Dropout(params["dropout_2"]),
             Dense(1, activation="sigmoid"),
         ]
     )
-    model.compile(optimizer=Adam(learning_rate=1e-3), loss="binary_crossentropy", metrics=["accuracy"])
+    model.compile(optimizer=Adam(learning_rate=params["learning_rate"]), loss="binary_crossentropy", metrics=["accuracy"])
     return model
 
 
 def train_ann(X_train, X_test, y_train, y_test) -> tuple[dict, pd.DataFrame, tuple[np.ndarray, np.ndarray, float]]:
-    preprocessor = create_preprocessor()
-    X_train_proc = preprocessor.fit_transform(X_train)
-    X_test_proc = preprocessor.transform(X_test)
+    num_features, cat_features = infer_feature_groups(X_train)
+    preprocessor = create_preprocessor(num_features, cat_features)
 
-    if hasattr(X_train_proc, "toarray"):
-        X_train_proc = X_train_proc.toarray()
-        X_test_proc = X_test_proc.toarray()
-
-    ann = build_ann(X_train_proc.shape[1])
-    early_stopping = EarlyStopping(monitor="val_loss", patience=12, restore_best_weights=True)
-
-    history = ann.fit(
-        X_train_proc,
+    X_tr, X_val, y_tr, y_val = train_test_split(
+        X_train,
         y_train,
-        validation_split=0.2,
-        epochs=200,
-        batch_size=16,
-        callbacks=[early_stopping],
-        verbose=0,
+        test_size=0.2,
+        random_state=RANDOM_STATE,
+        stratify=y_train,
     )
 
-    y_score = ann.predict(X_test_proc, verbose=0).reshape(-1)
+    X_tr_proc = preprocessor.fit_transform(X_tr)
+    X_val_proc = preprocessor.transform(X_val)
+    X_test_proc = preprocessor.transform(X_test)
+
+    if hasattr(X_tr_proc, "toarray"):
+        X_tr_proc = X_tr_proc.toarray()
+        X_val_proc = X_val_proc.toarray()
+        X_test_proc = X_test_proc.toarray()
+
+    param_space = {
+        "units_1": [32, 64, 96],
+        "units_2": [16, 32, 48],
+        "dropout_1": [0.2, 0.3, 0.4],
+        "dropout_2": [0.1, 0.2, 0.3],
+        "learning_rate": [1e-3, 5e-4],
+        "batch_size": [16, 32],
+    }
+    sampled_params = list(ParameterSampler(param_space, n_iter=8, random_state=RANDOM_STATE))
+
+    best_auc = -1.0
+    best_model = None
+    best_params = None
+    best_history_df = None
+    tuning_rows = []
+
+    for params in sampled_params:
+        ann = build_ann(X_tr_proc.shape[1], params)
+        early_stopping = EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True)
+        history = ann.fit(
+            X_tr_proc,
+            y_tr,
+            validation_data=(X_val_proc, y_val),
+            epochs=150,
+            batch_size=params["batch_size"],
+            callbacks=[early_stopping],
+            verbose=0,
+        )
+
+        val_score = ann.predict(X_val_proc, verbose=0).reshape(-1)
+        val_auc = roc_auc_score(y_val, val_score)
+        tuning_rows.append({**params, "val_roc_auc": float(val_auc), "epochs_ran": len(history.history["loss"])})
+
+        if val_auc > best_auc:
+            best_auc = val_auc
+            best_model = ann
+            best_params = params
+            best_history_df = pd.DataFrame(history.history)
+
+    tuning_df = pd.DataFrame(tuning_rows).sort_values("val_roc_auc", ascending=False)
+    tuning_df.to_csv(REPORTS_DIR / "ann_tuning_results.csv", index=False)
+
+    y_score = best_model.predict(X_test_proc, verbose=0).reshape(-1)
     y_pred = (y_score >= 0.5).astype(int)
 
     metrics = {
@@ -263,17 +384,18 @@ def train_ann(X_train, X_test, y_train, y_test) -> tuple[dict, pd.DataFrame, tup
         "f1_score": f1_score(y_test, y_pred),
         "roc_auc": roc_auc_score(y_test, y_score),
         "classification_report": classification_report(y_test, y_pred, output_dict=True),
+        "best_params": best_params,
+        "best_validation_roc_auc": float(best_auc),
     }
 
     save_confusion_matrix(y_test, y_pred, "Artificial Neural Network")
 
     fpr, tpr, _ = roc_curve(y_test, y_score)
 
-    ann.save(MODELS_DIR / "ann_model.keras")
+    best_model.save(MODELS_DIR / "ann_model.keras")
     joblib.dump(preprocessor, MODELS_DIR / "ann_preprocessor.joblib")
 
-    history_df = pd.DataFrame(history.history)
-    return metrics, history_df, (fpr, tpr, metrics["roc_auc"])
+    return metrics, best_history_df, (fpr, tpr, metrics["roc_auc"])
 
 
 def save_history_plot(history_df: pd.DataFrame) -> None:
@@ -295,6 +417,14 @@ def main() -> None:
     df = load_dataset()
     df = preprocess_input(df)
 
+    df, outlier_summary = handle_outliers_iqr(df)
+    if not outlier_summary.empty:
+        outlier_summary.to_csv(REPORTS_DIR / "outlier_handling_summary.csv", index=False)
+
+    df, dropped_by_corr = apply_correlation_filter(df, threshold=0.90)
+    with open(REPORTS_DIR / "correlation_filter_summary.json", "w", encoding="utf-8") as fp:
+        json.dump({"threshold": 0.90, "dropped_features": dropped_by_corr}, fp, indent=2)
+
     X = df.drop(columns=[TARGET_COL])
     y = df[TARGET_COL]
 
@@ -305,6 +435,14 @@ def main() -> None:
         random_state=RANDOM_STATE,
         stratify=y,
     )
+
+    selected_features, feature_importance = select_top_features_by_importance(X_train, y_train, top_k=10)
+    feature_importance.to_csv(REPORTS_DIR / "feature_importance.csv", index=False)
+    with open(REPORTS_DIR / "feature_selection_summary.json", "w", encoding="utf-8") as fp:
+        json.dump({"selected_top_features": selected_features}, fp, indent=2)
+
+    X_train = X_train[selected_features]
+    X_test = X_test[selected_features]
 
     ml_summary, ml_details, ml_roc_data = train_ml_models(X_train, X_test, y_train, y_test)
 
@@ -326,6 +464,8 @@ def main() -> None:
         "ml_model_details": ml_details,
         "ann_details": {
             "classification_report": ann_metrics["classification_report"],
+            "best_params": ann_metrics["best_params"],
+            "best_validation_roc_auc": ann_metrics["best_validation_roc_auc"],
         },
         "best_model": best_model_name,
     }

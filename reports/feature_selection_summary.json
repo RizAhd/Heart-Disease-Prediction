@@ -1,0 +1,14 @@
+{
+  "selected_top_features": [
+    "cp",
+    "ca",
+    "thalach",
+    "thal",
+    "oldpeak",
+    "chol",
+    "age",
+    "trestbps",
+    "exang",
+    "slope"
+  ]
+}
