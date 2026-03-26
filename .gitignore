@@ -1,0 +1,23 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data and artifacts
+models/*.joblib
+models/*.keras
+reports/figures/*.png
+reports/*.csv
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
