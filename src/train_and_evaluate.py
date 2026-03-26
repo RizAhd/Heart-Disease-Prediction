@@ -117,7 +117,11 @@ def save_confusion_matrix(y_true, y_pred, model_name: str) -> None:
     plt.close(fig)
 
 
-def save_roc_curves(curves: dict[str, tuple[np.ndarray, np.ndarray, float]]) -> None:
+def save_roc_curves(
+    curves: dict[str, tuple[np.ndarray, np.ndarray, float]],
+    filename: str = "roc_curves_comparison.png",
+    title: str = "ROC Curves - Model Comparison",
+) -> None:
     fig, ax = plt.subplots(figsize=(7, 5))
 
     for model_name, (fpr, tpr, auc_val) in curves.items():
@@ -126,14 +130,14 @@ def save_roc_curves(curves: dict[str, tuple[np.ndarray, np.ndarray, float]]) -> 
     ax.plot([0, 1], [0, 1], linestyle="--", color="gray")
     ax.set_xlabel("False Positive Rate")
     ax.set_ylabel("True Positive Rate")
-    ax.set_title("ROC Curves - Model Comparison")
+    ax.set_title(title)
     ax.legend(loc="lower right")
     fig.tight_layout()
-    fig.savefig(FIGURES_DIR / "roc_curves_comparison.png", dpi=200)
+    fig.savefig(FIGURES_DIR / filename, dpi=200)
     plt.close(fig)
 
 
-def train_ml_models(X_train, X_test, y_train, y_test) -> tuple[pd.DataFrame, dict]:
+def train_ml_models(X_train, X_test, y_train, y_test) -> tuple[pd.DataFrame, dict, dict[str, tuple[np.ndarray, np.ndarray, float]]]:
     preprocessor = create_preprocessor()
 
     models = {
@@ -194,8 +198,6 @@ def train_ml_models(X_train, X_test, y_train, y_test) -> tuple[pd.DataFrame, dic
 
         joblib.dump(best_model, MODELS_DIR / f"{name.lower().replace(' ', '_')}.joblib")
 
-    save_roc_curves(roc_data)
-
     summary = pd.DataFrame(
         [
             {
@@ -211,7 +213,7 @@ def train_ml_models(X_train, X_test, y_train, y_test) -> tuple[pd.DataFrame, dic
     ).sort_values(by="roc_auc", ascending=False)
 
     details = {r["model"]: {"best_params": r["best_params"], "classification_report": r["classification_report"]} for r in metrics_rows}
-    return summary, details
+    return summary, details, roc_data
 
 
 def build_ann(input_dim: int) -> Sequential:
@@ -228,7 +230,7 @@ def build_ann(input_dim: int) -> Sequential:
     return model
 
 
-def train_ann(X_train, X_test, y_train, y_test) -> tuple[dict, pd.DataFrame]:
+def train_ann(X_train, X_test, y_train, y_test) -> tuple[dict, pd.DataFrame, tuple[np.ndarray, np.ndarray, float]]:
     preprocessor = create_preprocessor()
     X_train_proc = preprocessor.fit_transform(X_train)
     X_test_proc = preprocessor.transform(X_test)
@@ -266,13 +268,12 @@ def train_ann(X_train, X_test, y_train, y_test) -> tuple[dict, pd.DataFrame]:
     save_confusion_matrix(y_test, y_pred, "Artificial Neural Network")
 
     fpr, tpr, _ = roc_curve(y_test, y_score)
-    save_roc_curves({"Artificial Neural Network": (fpr, tpr, metrics["roc_auc"])})
 
     ann.save(MODELS_DIR / "ann_model.keras")
     joblib.dump(preprocessor, MODELS_DIR / "ann_preprocessor.joblib")
 
     history_df = pd.DataFrame(history.history)
-    return metrics, history_df
+    return metrics, history_df, (fpr, tpr, metrics["roc_auc"])
 
 
 def save_history_plot(history_df: pd.DataFrame) -> None:
@@ -305,10 +306,14 @@ def main() -> None:
         stratify=y,
     )
 
-    ml_summary, ml_details = train_ml_models(X_train, X_test, y_train, y_test)
+    ml_summary, ml_details, ml_roc_data = train_ml_models(X_train, X_test, y_train, y_test)
 
-    ann_metrics, ann_history = train_ann(X_train, X_test, y_train, y_test)
+    ann_metrics, ann_history, ann_roc = train_ann(X_train, X_test, y_train, y_test)
     save_history_plot(ann_history)
+
+    all_roc_data = dict(ml_roc_data)
+    all_roc_data["Artificial Neural Network"] = ann_roc
+    save_roc_curves(all_roc_data)
 
     full_summary = pd.concat([ml_summary, pd.DataFrame([ann_metrics]).drop(columns=["classification_report"])], ignore_index=True)
     full_summary = full_summary.sort_values(by="roc_auc", ascending=False)
